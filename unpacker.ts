@@ -104,6 +104,7 @@ interface JSONHashData {
 
 interface Phaser3Data {
     textures: Partial<Meta> & {
+        image: string,
         frames: FramesArray;
     }[];
     meta: Partial<Meta>;
@@ -115,9 +116,9 @@ type SpritesData = Record<Filename, {
     extendOptions: sharp.ExtendOptions;
 }>;
 
-const textureFormat = 'png';
-const textureFormatRegEx = new RegExp(`.${textureFormat}$`, 'i');
-const dataFormats = ['json', 'plist'];
+type FileData = Record<string, {
+    sprites: SpritesData;
+}>;
 
 const toNumbersArray = (str: string): number[] =>
 {
@@ -194,9 +195,8 @@ const parsePlistData = (rawData: string): PlistData =>
     return plistData;
 };
 
-const parseJsonData = (rawData: string): JSONArrayData =>
+const parseJsonData = (data: any, imageName: string | null): JSONArrayData =>
 {
-    const data = JSON.parse(rawData);
     const frames = (data as JSONArrayData | JSONHashData).frames;
 
     if (frames)
@@ -224,7 +224,7 @@ const parseJsonData = (rawData: string): JSONArrayData =>
     else if ((data as Phaser3Data).textures)
     {
         const phaser3Data = data as Phaser3Data;
-        const textureData = phaser3Data.textures[0];
+        const textureData = imageName !== null ? phaser3Data.textures.find(texture => texture.image === imageName) : phaser3Data.textures[0];
 
         const jsonData = {
             frames: textureData.frames,
@@ -240,9 +240,8 @@ const parseJsonData = (rawData: string): JSONArrayData =>
     return data;
 };
 
-const getSpritesData = (filePath: string, ext: string): SpritesData =>
+const getSpritesData = (rawData : string, ext: string, imageName: string | null): SpritesData =>
 {
-    const rawData = readFileSync(filePath + ext, 'utf8');
 
     if (ext === '.plist')
     {
@@ -283,7 +282,7 @@ const getSpritesData = (filePath: string, ext: string): SpritesData =>
     }
     else if (ext === '.json')
     {
-        const data = parseJsonData(rawData);
+        const data = parseJsonData(rawData, imageName);
         const spritesData: SpritesData = {};
 
         data.frames.forEach((f) =>
@@ -325,55 +324,90 @@ const getSpritesData = (filePath: string, ext: string): SpritesData =>
     }
 };
 
+const getFileData = (filePath: string, ext: string): FileData =>
+{
+    const path = extname(filePath) == ".json" ? filePath : filePath + ext;
+    const rawData = readFileSync(path, 'utf8');
+    const data = JSON.parse(rawData);
+    const fileData: FileData = {};
+    if (ext == ".plist") {
+        fileData[filePath] = {
+            sprites: getSpritesData(data, ext, null)
+        }
+    }
+    else if (ext == ".json") {
+        if ((data as Phaser3Data).textures) {
+            const phaser3Data = data as Phaser3Data;
+            phaser3Data.textures.forEach((texture): any => {
+                const imageName = texture.image;
+                fileData[imageName] = {
+                    sprites: getSpritesData(data, ext, imageName)
+                }
+            })
+        }
+        else {
+            fileData[filePath] = {
+                sprites: getSpritesData(data, ext, null)
+            }
+        }
+    }
+    return fileData;
+}
+
 const generateSprites = (filePath: string, ext: string): void =>
 {
-    const texture = sharp(`${filePath}.${textureFormat}`);
-    const spritesData = getSpritesData(filePath, ext);
+    const fileData = getFileData(filePath, ext);
 
-    const promises: Promise<void>[] = [];
+    for (const fileName in fileData) {
+        const spritesData = fileData[fileName].sprites;
+        const path = dirname(filePath)
+        const file = join(path, fileName).replace(textureFormatRegEx, '')
+        const texture = sharp(`${file}.${textureFormat}`);
+        const promises: Promise<void>[] = [];
 
-    for (const spriteName in spritesData)
-    {
-        let outPath = join(filePath, spriteName);
-        if (!outPath.toLowerCase().endsWith('.png'))
+        for (const spriteName in spritesData)
         {
-            outPath += '.png';
+            let outPath = join(file, spriteName);
+            if (!outPath.toLowerCase().endsWith('.png') && !outPath.toLowerCase().endsWith('webp'))
+            {
+                outPath += '.png';
+            }
+
+            const dir = dirname(outPath);
+            if (!existsSync(dir))
+            {
+                mkdirSync(dir, { recursive: true });
+            }
+
+            const spriteData = spritesData[spriteName];
+
+            promises.push(texture.clone()
+                // Method order is important when rotating,
+                // resizing, and/or extracting regions:
+                // https://sharp.pixelplumbing.com/api-operation#rotate
+                .rotate(spriteData.rotated ? -90 : 0)
+                .extract(spriteData.extractRegion)
+                .extend(spriteData.extendOptions)
+                .toFile(outPath).then(() =>
+                {
+                    console.info(`${outPath} generated.`);
+                },
+                (reason) =>
+                {
+                    console.error(`'${spriteName}' error:`, reason);
+                })
+            );
         }
 
-        const dir = dirname(outPath);
-        if (!existsSync(dir))
+        Promise.all(promises).then(() =>
         {
-            mkdirSync(dir, { recursive: true });
-        }
-
-        const spriteData = spritesData[spriteName];
-
-        promises.push(texture.clone()
-            // Method order is important when rotating,
-            // resizing, and/or extracting regions:
-            // https://sharp.pixelplumbing.com/api-operation#rotate
-            .rotate(spriteData.rotated ? -90 : 0)
-            .extract(spriteData.extractRegion)
-            .extend(spriteData.extendOptions)
-            .toFile(outPath).then(() =>
-            {
-                console.info(`${outPath} generated.`);
-            },
-            (reason) =>
-            {
-                console.error(`'${spriteName}' error:`, reason);
-            })
-        );
+            console.info(`Unpacking '${file}' complete.`);
+        },
+        (reason) =>
+        {
+            console.error(reason);
+        });
     }
-
-    Promise.all(promises).then(() =>
-    {
-        console.info(`Unpacking '${filePath}' complete.`);
-    },
-    (reason) =>
-    {
-        console.error(reason);
-    });
 };
 
 // Get the all files in the specified directory (path).
@@ -399,42 +433,42 @@ const getFiles = (path: string): string[] =>
     return results;
 };
 
-const getDataPath = (filePath: string, ext: string): string =>
-{
-    if (ext)
-    {
-        return filePath + ext;
-    }
+// const getDataPath = (filePath: string, ext: string): string =>
+// {
+//     if (ext)
+//     {
+//         return filePath + ext;
+//     }
 
-    for (let i = 0; i < dataFormats.length; i++)
-    {
-        const dataFormat = dataFormats[i];
-        const dataPath = `${filePath}.${dataFormat}`;
+//     for (let i = 0; i < dataFormats.length; i++)
+//     {
+//         const dataFormat = dataFormats[i];
+//         const dataPath = `${filePath}.${dataFormat}`;
 
-        if (existsSync(dataPath))
-        {
-            console.info(`'${dataFormat}' data format found for '${filePath}'.`);
-            return dataPath;
-        }
-    }
+//         if (existsSync(dataPath))
+//         {
+//             console.info(`'${dataFormat}' data format found for '${filePath}'.`);
+//             return dataPath;
+//         }
+//     }
 
-    return filePath;
-};
+//     return filePath;
+// };
 
 const unpack = (filePath: string, ext: string): void =>
 {
-    const dataPath = getDataPath(filePath, ext);
-    const texturePath = `${filePath}.${textureFormat}`;
+    // const dataPath = getDataPath(filePath, ext);
+    // const texturePath = `${filePath}.${textureFormat}`;
 
-    if (existsSync(dataPath) && existsSync(texturePath))
-    {
-        generateSprites(filePath, extname(dataPath));
-    }
-    else
-    {
-        console.warn('Make sure you have both data and texture files'
-            + ` in the same directory for:\n'${filePath}'`);
-    }
+    // if (existsSync(dataPath) && existsSync(texturePath))
+    // {
+        generateSprites(filePath, extname(filePath));
+    // }
+    // else
+    // {
+    //     console.warn('Make sure you have both data and texture files'
+    //         + ` in the same directory for:\n'${filePath}'`);
+    // }
 };
 
 const getPathOrName = (argv: string[]): string =>
@@ -478,6 +512,16 @@ const getExtFromDataFormat = (argv: string[]): string =>
 
 // Usage: npm run unpack [<path>] [<format>]
 const argv = process.argv.slice(2);
+
+const textureFormat = (argv[1] == "png") ? 'png' : 'webp';
+const textureFormatRegEx = new RegExp(`.${textureFormat}$`, 'i');
+// const dataFormats = ['json', 'plist'];
+
+if (extname(argv[0]) == ".json") {
+
+}
+
+
 const pathOrName = getPathOrName(argv);
 const ext = getExtFromDataFormat(argv);
 
