@@ -90,7 +90,7 @@ $ npm run unpack
 TODO: Update README to properly document added usage options
 rough documentation:
 
-my personal powershell alias to run from any directory:
+my personal powershell alias to run from texture-unpacker from any directory:
 
 ```bash
 function Texture-Unpacker ($1, $2){
@@ -98,16 +98,15 @@ function Texture-Unpacker ($1, $2){
     echo "running command 'npm run --prefix `"path_to_texture-unpacker`" unpack "$1" "$2"'"
     npm run unpack $dir"\"$1 $2 --prefix path_to_texture-unpacker
 }
+
+Set-Alias unpack Texture-Unpacker
 ```
-new usage option (assumes using an that mimics the above):
+new usage option (assumes using an alias that mimics the above):
 
 ```bash
 unpack dataFile.json
 ```
 
 this takes in a json file packed by TexturePacker for Phaser3 and uses the "image" property to properly locate and read the associated texture files. each file is then unpacked into its own folder of the same name as each image property. I'm hoping to change this to allow dumping all unpacked texture files into one folder with a name matching the json data file, but that's a very low priority.
-
-Set-Alias unpack Texture-Unpacker
-
 ___
 ###### Originally ported from [onepill/texture_unpacker_scirpt](https://github.com/onepill/texture_unpacker_scirpt) archive written in python.
