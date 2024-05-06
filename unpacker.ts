@@ -363,11 +363,12 @@ const generateSprites = (filePath: string, ext: string): void =>
         const path = dirname(filePath)
         const file = join(path, fileName).replace(textureFormatRegEx, '')
         const texture = sharp(`${file}.${textureFormat}`);
+        const outPathBase = join(filePath.replace(ext, ''), '/')
         const promises: Promise<void>[] = [];
 
         for (const spriteName in spritesData)
         {
-            let outPath = join(file, spriteName);
+            let outPath = join(outPathBase, spriteName);
             if (!outPath.toLowerCase().endsWith('.png') && !outPath.toLowerCase().endsWith('webp'))
             {
                 outPath += '.png';
@@ -504,8 +505,7 @@ const getExtFromDataFormat = (argv: string[]): string =>
                 return `.${ext}`;
 
             default:
-                console.error(`Unexpected data format passed: '${ext}'!`);
-                process.exit(1);
+                return '';
         }
     }
 };
